@@ -48,7 +48,7 @@
 
 	sudo losetup -d /dev/loop1
 
-*[Optionally]  Test image using qemu:*
+*[Optionally] Test OS disk image using qemu:*
 
 	qemu-system-x86_64 \
 	  -enable-kvm \
