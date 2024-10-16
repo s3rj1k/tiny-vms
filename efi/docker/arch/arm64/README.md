@@ -1,18 +1,19 @@
-**Alpine EFI Virtual Machine specific OS Image.**
+**Arch Linux ARM64 EFI Virtual Machine specific OS Image.**
+
+*Setup multiarch docker:*
+
+	yay -S qemu-user-static qemu-user-static-binfmt
+	docker run --rm --privileged multiarch/qemu-user-static --reset -p yes
 
 *Build rootfs using docker:*
 
-	docker build --force-rm -t alpine:vm .
-
-*[Optionally] Debug rootfs using docker:*
-
-	docker run --interactive --network host --rm --tty alpine:vm sh
+	docker build --force-rm -t archlinux:arm64-vm .
 
 *Dump rootfs from docker image:*
 
-	export LAYER=`docker image inspect alpine:vm --format '{{ index .RootFS.Layers 0 }}' | awk -F: '{print $2}'`
+	export LAYER=`docker image inspect archlinux:arm64-vm --format '{{ index .RootFS.Layers 0 }}' | awk -F: '{print $2}'`
 
-	rm -vf ${LAYER} && docker save alpine:vm | tar --strip-components=2 --strip-components=2 -xf - "blobs/sha256/${LAYER}" && mv -v ${LAYER} rootfs.tar
+	rm -vf ${LAYER} && docker save archlinux:arm64-vm | tar --strip-components=2 --strip-components=2 -xf - "blobs/sha256/${LAYER}" && mv -v ${LAYER} rootfs.tar
 
 *Prepare empty raw disk image file:*
 
@@ -32,7 +33,7 @@
 *Format partitions inside disk image:*
 
 	sudo mkfs.vfat -F 32 -n ESP /dev/loop1p1
-	sudo mkfs.ext4 -O encrypt -O ^FEATURE_C12 -m 0 -L root /dev/loop1p2
+	sudo mkfs.ext4 -O encrypt -m 0 -L root /dev/loop1p2
 
 *Mount partitions from disk image to local system:*
 
@@ -53,16 +54,21 @@
 
 *[Optionally] Test OS disk image using qemu:*
 
-	qemu-system-x86_64 \
-	  -machine q35 \
-	  -cpu host \
-	  -enable-kvm \
+	yay -S qemu-system-aarch64 edk2-aarch64
+
+	qemu-system-aarch64 \
+	  -machine virt \
+	  -cpu cortex-a72 \
 	  -m 4G \
 	  -smp 2 \
-	  -bios /usr/share/edk2-ovmf/x64/OVMF_CODE.fd \
+	  -bios /usr/share/edk2/aarch64/QEMU_EFI.fd \
 	  -blockdev driver=file,filename=rootfs.img,node-name=hd0 \
-	  -device virtio-blk-pci,drive=hd0,bootindex=0 \
+	  -device virtio-blk-device,drive=hd0,bootindex=0 \
 	  -nographic \
 	  -netdev user,id=vnet,hostfwd=:127.0.0.1:0-:22 \
 	  -device virtio-net-pci,netdev=vnet,romfile= \
 	  -boot menu=off,strict=on,order=c
+
+*Installs systemd-boot into the EFI system partition:*
+
+	bootctl install --esp-path=/efi/ --boot-path=/boot/ --root=/
