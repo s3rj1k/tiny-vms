@@ -78,6 +78,8 @@ RUN ln -sf /usr/lib/systemd/system/avahi-daemon.service /etc/systemd/system/mult
     ln -sf /usr/lib/systemd/system/avahi-daemon.service /etc/systemd/system/dbus-org.freedesktop.Avahi.service && \
     ln -sf /usr/lib/systemd/system/docker.service /etc/systemd/system/multi-user.target.wants/docker.service
 
+RUN cp /usr/share/doc/avahi/ssh.service /etc/avahi/services/
+
 RUN rm -vf /etc/locale.gen.pacnew
 
 FROM upgrade AS yay_builder
@@ -190,6 +192,48 @@ Match User root
     PermitTTY yes
     PermitTunnel yes
     AllowTcpForwarding yes
+EOF
+
+RUN rm -vf /etc/systemd/network/*
+
+COPY <<EOF /etc/systemd/network/wan.link
+[Match]
+Name=enp0s1
+
+[Link]
+MACAddressPolicy=random
+EOF
+
+COPY <<EOF /etc/systemd/network/wan.network
+[Match]
+Name=enp0s1
+
+[Network]
+DHCP=yes
+DNSSEC=no
+MulticastDNS=true
+DNSDefaultRoute=true
+EOF
+
+COPY <<EOF /etc/systemd/network/shared.link
+[Match]
+Name=enp0s2
+
+[Link]
+MACAddressPolicy=random
+EOF
+
+COPY <<EOF /etc/systemd/network/shared.network
+[Match]
+Name=enp0s2
+
+[Network]
+DHCP=yes
+DNSSEC=no
+MulticastDNS=true
+
+[DHCP]
+UseRoutes=no
 EOF
 
 FROM scratch
