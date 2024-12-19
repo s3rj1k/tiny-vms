@@ -23,9 +23,6 @@ RUN echo 'LANG="en_US.UTF-8"' > /etc/locale.conf && \
     echo 'en_US.UTF-8 UTF-8' > /etc/locale.gen && \
     locale-gen
 
-RUN mkdir -p /etc/systemd/resolved.conf.d && \
-    echo -e "[Resolve]\nDNS=1.1.1.1 8.8.8.8" > /etc/systemd/resolved.conf.d/dns_servers.conf
-
 # https://github.com/moby/buildkit/issues/1267#issuecomment-768903038
 RUN sed -i -e '/^HoldPkg/c\HoldPkg     = pacman glibc filesystem' /etc/pacman.conf && \
     sed -i -e 's~#IgnorePkg.*~IgnorePkg = filesystem~g' /etc/pacman.conf
@@ -77,6 +74,8 @@ RUN ln -sf /usr/lib/systemd/system/avahi-daemon.service /etc/systemd/system/mult
     ln -sf /usr/lib/systemd/system/avahi-daemon.socket /etc/systemd/system/sockets.target.wants/avahi-daemon.socket && \
     ln -sf /usr/lib/systemd/system/avahi-daemon.service /etc/systemd/system/dbus-org.freedesktop.Avahi.service && \
     ln -sf /usr/lib/systemd/system/docker.service /etc/systemd/system/multi-user.target.wants/docker.service
+
+RUN cp /usr/share/doc/avahi/ssh.service /etc/avahi/services/
 
 RUN rm -vf /etc/locale.gen.pacnew
 
@@ -191,6 +190,174 @@ Match User root
     PermitTunnel yes
     AllowTcpForwarding yes
 EOF
+
+RUN rm -vf /etc/systemd/network/*
+
+COPY <<EOF /etc/systemd/network/wan.link
+[Match]
+Name=enp0s1
+
+[Link]
+MACAddressPolicy=random
+EOF
+
+COPY <<EOF /etc/systemd/network/wan.network
+[Match]
+Name=enp0s1
+
+[Network]
+DHCP=ipv4
+
+LinkLocalAddressing=yes
+IPv4LLRoute=yes
+
+DNS=1.1.1.1
+DNS=8.8.8.8
+
+DNSOverTLS=yes
+EOF
+
+COPY <<EOF /etc/systemd/network/shared.link
+[Match]
+Name=enp0s2
+
+[Link]
+MACAddressPolicy=random
+EOF
+
+COPY <<EOF /etc/systemd/network/shared.network
+[Match]
+Name=enp0s2
+
+[Network]
+DHCP=ipv4
+LinkLocalAddressing=no
+
+DefaultRouteOnDevice=false
+DNSDefaultRoute=false
+
+Domains=~vpn.dev
+
+[DHCP]
+UseRoutes=no
+
+[Route]
+GatewayOnLink=yes
+# On MacOS: sudo defaults read /Library/Preferences/SystemConfiguration/com.apple.vmnet.plist Shared_Net_Address
+Gateway=192.168.64.1
+Destination=172.16.0.0/12
+Table=2048
+
+[RoutingPolicyRule]
+From=172.16.0.0/12
+Table=2048
+
+[RoutingPolicyRule]
+To=172.16.0.0/12
+Table=2048
+EOF
+
+RUN mkdir -p /etc/docker/
+
+COPY <<EOF /etc/docker/daemon.json
+{
+  "experimental": true,
+  "default-address-pools": [
+    {
+      "base": "10.42.0.0/16",
+      "size": 24
+    }
+  ],
+  "dns": [
+    "10.42.0.1"
+  ],
+  "insecure-registries": [],
+  "registry-mirrors": [],
+  "builder": {
+    "gc": {
+      "enabled": true,
+      "defaultKeepStorage": "10GB",
+      "policy": [
+        {
+          "keepStorage": "10GB",
+          "filter": [
+            "unused-for=42h"
+          ]
+        },
+        {
+          "keepStorage": "50GB",
+          "all": true
+        }
+      ]
+    }
+  }
+}
+EOF
+
+RUN mkdir -p /etc/systemd/resolved.conf.d/
+
+COPY <<EOF /etc/systemd/resolved.conf.d/global.conf
+[Resolve]
+DNSStubListenerExtra=10.42.0.1
+
+MulticastDNS=no
+LLMNR=no
+
+ReadEtcHosts=yes
+EOF
+
+COPY <<EOF /etc/avahi/avahi-daemon.conf
+# avahi-browse --all --ignore-local --resolve --terminate
+[server]
+domain-name=local
+use-ipv4=yes
+use-ipv6=yes
+allow-interfaces=enp0s1
+use-iff-running=yes
+enable-dbus=yes
+disallow-other-stacks=yes
+
+[wide-area]
+enable-wide-area=yes
+
+[publish]
+publish-addresses=yes
+publish-hinfo=no
+publish-workstation=no
+publish-domain=yes
+
+[reflector]
+enable-reflector=no
+EOF
+
+COPY <<EOF /etc/systemd/system/restart-avahi.service
+[Unit]
+Description=Restart Avahi daemon
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/systemctl restart avahi-daemon.service
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+COPY <<EOF /etc/systemd/system/restart-avahi.timer
+[Unit]
+Description=Timer to restart Avahi daemon every 3 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=3min
+Unit=restart-avahi.service
+
+[Install]
+WantedBy=timers.target
+EOF
+
+# Disable timer by default
+#RUN ln -sf /etc/systemd/system/restart-avahi.timer /etc/systemd/system/timers.target.wants/restart-avahi.timer
 
 FROM scratch
 COPY --from=rootfs / /
